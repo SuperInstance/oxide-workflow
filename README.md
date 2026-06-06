@@ -1,93 +1,41 @@
 # oxide-workflow
 
+*GPU kernel workflow orchestration with DAG execution, retry, and rollback.*
 
+## Why This Exists
 
-## Why This Matters
+Complex GPU operations aren't single kernels — they're DAGs of kernel launches. This crate orchestrates those DAGs with ternary step states (success/pending/failed), automatic retry on failure, and rollback for partial completion.
 
-# oxide-workflow
-GPU kernel workflow orchestration with ternary step states.
-DAG execution, retry on failure, rollback, and progress tracking.
+## Architecture
 
-## The Five-Layer Stack
+### Key Types
 
-This crate is part of the **Oxide Stack** — a distributed GPU runtime built on five layers:
+Workflow (DAG of kernel steps), Step (single kernel launch with ternary state), WorkflowExecutor (runs DAG with dependency resolution), Progress (step completion tracking)
+
+### State Machine
 
 ```
-┌─────────────────┐
-│  cudaclaw        │  Persistent GPU kernels, warp consensus, SmartCRDT
-├─────────────────┤
-│  cuda-oxide      │  Flux → MIR → Pliron → NVVM → PTX compiler
-├─────────────────┤
-│  flux-core       │  Bytecode VM + A2A agent protocol
-├─────────────────┤
-│  pincher         │  "Vector DB as runtime, LLM as compiler"
-├─────────────────┤
-│  open-parallel   │  Async runtime (tokio fork)
-└─────────────────┘
-```
-
-The key insight: **ternary values {-1, 0, +1} map directly to GPU compute**. They pack 16× denser than FP32, enable XNOR+popcount matmul, and conservation laws become compile-time checks.
-
-## Design
-
-Every value in this crate follows **ternary algebra** (Z₃):
-
-| Value | Meaning | GPU Analog |
-|-------|---------|------------|
-| +1 | Positive / Active / Healthy | Warp vote yes |
-| 0 | Neutral / Pending / Balanced | Warp vote abstain |
-| -1 | Negative / Failed / Overloaded | Warp vote no |
-
-This isn't arbitrary — ternary is the natural encoding for:
-1. **BitNet b1.58** (Microsoft) — ternary LLMs at 60% less power
-2. **GPU warp voting** — hardware ballot returns ternary consensus
-3. **Conservation laws** — {-1, 0, +1} preserves quantity
-
-## Key Types
-
-```rust
-pub enum StepState
-pub fn from_i8
-pub fn as_i8
-pub struct WorkflowStep
-pub fn new
-pub fn depends_on
-pub fn with_max_retries
-pub fn can_retry
-pub struct Progress
-pub fn remaining
-pub fn percent_remaining
-pub struct WorkflowDAG
++1 (Active/Arrived/Allocated)
+  ↓ transition event
+ 0 (Grace/InTransit/Fragmented)
+  ↓ transition event
+-1 (Reclaimable/NotStarted/Free)
 ```
 
 ## Usage
 
-```toml
-[dependencies]
-oxide-workflow = "0.1.0"
-```
-
 ```rust
 use oxide_workflow::*;
-// See src/lib.rs tests for complete working examples
+
+let mut wf = Workflow::new(); wf.add_step("compute").depends_on("load"); wf.add_step("store").depends_on("compute"); let result = executor.run(wf);
 ```
 
-## Testing
+## The Deeper Idea
 
-```bash
-git clone https://github.com/SuperInstance/oxide-workflow.git
-cd oxide-workflow
-cargo test    # 11 tests
-```
+Workflow orchestration is where the oxide stack becomes a real system. Individual kernels are interesting; composing them into pipelines is engineering. The ternary state per step enables partial failure handling that binary (done/not-done) can't express.
 
-## Stats
+## Related Crates
 
-| Metric | Value |
-|--------|-------|
-| Tests | 11 |
-| Lines of Rust | 566 |
-| Public API | 26 items |
-
-## License
-
-Apache-2.0
+- `oxide-fleet` — Fleet-level orchestration using these primitives
+- `oxide-sandbox` — Safe execution environment built on oxide primitives
+- `oxide-slotmap` — Slot-based memory management (complementary allocation strategy)
